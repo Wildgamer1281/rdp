@@ -19,31 +19,39 @@ jobs:
       run: Expand-Archive ngrok.zip
 
     - name: Authenticate Ngrok
-      # Your token is hardcoded here
       run: .\ngrok\ngrok.exe authtoken 37StOYMIU4pYVYkHJ7Wt7Ec4Yp7_Fkx4pyYiySnXydtyNRTZ
 
     - name: Enable RDP & Configure System
       run: |
-        # 1. Enable RDP in Registry
+        # Enable RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
         
-        # 2. Create User: administrator / JohnTech1234
+        # Create User
         net user administrator JohnTech1234 /add
         net localgroup administrators administrator /add
         net user administrator /active:yes
         
-        # 3. Enable Audio (Safely)
-        # This checks if audio is running. If it is, it skips this step without crashing.
-        Set-Service -Name Audiosrv -StartupType Automatic
-        Start-Service -Name Audiosrv -ErrorAction SilentlyContinue
+        # Start Audio Service (Safely)
+        # We use 'try/catch' to ignore errors if it is already on
+        try {
+            Set-Service -Name Audiosrv -StartupType Automatic
+            Start-Service -Name Audiosrv -ErrorAction Stop
+        } catch {
+            Write-Host "Audio service is already running or cannot be started. Continuing..."
+        }
 
     - name: Start Ngrok Tunnel
-      run: Start-Process Powershell -ArgumentList '-Noexit -Command ".\ngrok\ngrok.exe tcp 3389"'
+      run: |
+        # Clear old logs
+        if (Test-Path ngrok.log) { Remove-Item ngrok.log }
+        
+        # Start Ngrok in the background and log output to a file
+        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput "ngrok.log" -WindowStyle Hidden
 
-    - name: Wait for Tunnel to Initialize
-      run: Start-Sleep -Seconds 10
+    - name: Wait for Tunnel
+      run: Start-Sleep -Seconds 15
 
     - name: Get RDP Connection Info
       run: | 
@@ -52,13 +60,13 @@ jobs:
             $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
             $url = $response.tunnels[0].public_url
         } catch {
-            Write-Host "Tunnel not ready yet, retrying..."
+            Write-Host "Tunnel fetching failed. Retrying..."
             Start-Sleep -Seconds 5
             try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
                 $url = $response.tunnels[0].public_url
             } catch {
-                Write-Host "Tunnel fetching failed."
+                Write-Host "Still failed."
             }
         }
 
@@ -71,7 +79,14 @@ jobs:
             Write-Host "Password: JohnTech1234"
             Write-Host "=========================================="
         } else {
-            Write-Error "Could not get the RDP Address. Ngrok did not start correctly."
+            # IF THIS FAILS, WE PRINT THE LOGS TO SEE WHY
+            Write-Error "Ngrok did not start correctly."
+            Write-Host "====== NGROK ERROR LOGS ======"
+            if (Test-Path ngrok.log) {
+                Get-Content ngrok.log
+            } else {
+                Write-Host "No log file found."
+            }
         }
 
     - name: Keep Alive (Loop)
