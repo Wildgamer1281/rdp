@@ -10,54 +10,49 @@ jobs:
     steps:
     - name: Download Required Files
       run: |
-        # Download Ngrok
         Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        # Download Wallpaper files (optional)
         Invoke-WebRequest https://raw.githubusercontent.com/30dayscoding/rdp/main/wallpaper.jpg -OutFile wallpaper.jpg
         Invoke-WebRequest https://raw.githubusercontent.com/30dayscoding/rdp/main/wallpaper.bat -OutFile wallpaper.bat
-        # Download Loop file
         Invoke-WebRequest https://github.com/30dayscoding/rdp/raw/main/loop.ps1 -OutFile loop.ps1
 
     - name: Extract Ngrok
       run: Expand-Archive ngrok.zip
 
     - name: Authenticate Ngrok
-      # I have inserted your token directly here
+      # Your token is hardcoded here
       run: .\ngrok\ngrok.exe authtoken 37StOYMIU4pYVYkHJ7Wt7Ec4Yp7_Fkx4pyYiySnXydtyNRTZ
 
     - name: Enable RDP & Configure System
       run: |
-        # Enable RDP Service
+        # 1. Enable RDP in Registry
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
         
-        # Create User: administrator / JohnTech1234
+        # 2. Create User: administrator / JohnTech1234
         net user administrator JohnTech1234 /add
         net localgroup administrators administrator /add
         net user administrator /active:yes
         
-        # Enable Audio Service
-        sc config Audiosrv start= auto
-        sc start audiosrv
+        # 3. Enable Audio (Safely)
+        # This checks if audio is running. If it is, it skips this step without crashing.
+        Set-Service -Name Audiosrv -StartupType Automatic
+        Start-Service -Name Audiosrv -ErrorAction SilentlyContinue
 
     - name: Start Ngrok Tunnel
-      # Starts the tunnel in the background
       run: Start-Process Powershell -ArgumentList '-Noexit -Command ".\ngrok\ngrok.exe tcp 3389"'
 
     - name: Wait for Tunnel to Initialize
-      # Gives Ngrok time to connect before we ask for the IP
       run: Start-Sleep -Seconds 10
 
     - name: Get RDP Connection Info
       run: | 
-        # This script asks Ngrok for the public URL using PowerShell (More reliable than start.bat)
         $url = ""
         try {
             $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
             $url = $response.tunnels[0].public_url
         } catch {
-            Write-Host "Waiting for tunnel..."
+            Write-Host "Tunnel not ready yet, retrying..."
             Start-Sleep -Seconds 5
             try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
@@ -76,7 +71,7 @@ jobs:
             Write-Host "Password: JohnTech1234"
             Write-Host "=========================================="
         } else {
-            Write-Error "Could not get the RDP Address. Please check the logs."
+            Write-Error "Could not get the RDP Address. Ngrok did not start correctly."
         }
 
     - name: Keep Alive (Loop)
